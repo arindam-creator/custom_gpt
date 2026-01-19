@@ -123,6 +123,10 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[types.Text
         return [types.TextContent(type="text", text=f"Error: {str(e)}")]
 
 # --- REST ENDPOINTS (For ChatGPT) ---
+@app.get("/")
+async def health_check():
+    return {"status": "ok", "message": "Django MCP Bridge is running!"}
+
 @app.get("/tasks/all")
 async def api_get_tasks(limit: int = 10, status: Optional[str] = None):
     return await logic_get_tasks(limit, status)
