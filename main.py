@@ -59,10 +59,18 @@ mcp_server = Server("Django-CRM-Bridge")
 async def logic_get_tasks(limit: int = 10, status: str = None):
     params = {"limit": limit}
     if status: params["status"] = status
-    return await fetch_from_django("tasks/all/", params=params)
+    return await fetch_from_django("tasks/", params=params)
 
 async def logic_create_task(title: str, priority: str = "medium"):
     return await fetch_from_django("tasks/", method="POST", body={"title": title, "priority": priority})
+
+# [ADDED] Logic for Latest Tasks
+async def logic_get_latest_tasks():
+    return await fetch_from_django("tasks/latest/")
+
+# [ADDED] Logic for Stats
+async def logic_get_stats():
+    return await fetch_from_django("tasks/statistics/")
 
 # --- MCP TOOL REGISTRATION (The Low-Level Way) ---
 
@@ -72,7 +80,7 @@ async def handle_list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="get_crm_tasks",
-            description="Fetch tasks from the CRM.",
+            description="Fetch all tasks from the CRM with filtering.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -91,6 +99,24 @@ async def handle_list_tools() -> list[types.Tool]:
                     "priority": {"type": "string", "enum": ["low", "medium", "high"]}
                 },
                 "required": ["title"]
+            }
+        ),
+        # [ADDED] Tool for Latest Tasks
+        types.Tool(
+            name="get_latest_tasks",
+            description="Fetch the most recent tasks from the CRM.",
+            inputSchema={
+                "type": "object",
+                "properties": {} # No inputs needed
+            }
+        ),
+        # [ADDED] Tool for Stats
+        types.Tool(
+            name="get_crm_stats",
+            description="Get CRM task statistics (counts by status, priority, etc).",
+            inputSchema={
+                "type": "object",
+                "properties": {} # No inputs needed
             }
         )
     ]
@@ -115,6 +141,16 @@ async def handle_call_tool(name: str, arguments: dict | None) -> list[types.Text
                 priority=arguments.get("priority", "medium")
             )
             return [types.TextContent(type="text", text=str(result))]
+
+        # [ADDED] Handling for Latest Tasks
+        elif name == "get_latest_tasks":
+            result = await logic_get_latest_tasks()
+            return [types.TextContent(type="text", text=str(result))]
+
+        # [ADDED] Handling for Stats
+        elif name == "get_crm_stats":
+            result = await logic_get_stats()
+            return [types.TextContent(type="text", text=str(result))]
             
         else:
             raise ValueError(f"Unknown tool: {name}")
@@ -130,6 +166,16 @@ async def health_check():
 @app.get("/tasks/all")
 async def api_get_tasks(limit: int = 10, status: Optional[str] = None):
     return await logic_get_tasks(limit, status)
+
+# [ADDED] Endpoint for Latest Tasks
+@app.get("/tasks/latest")
+async def api_get_latest_tasks():
+    return await logic_get_latest_tasks()
+
+# [ADDED] Endpoint for Stats
+@app.get("/stats")
+async def api_get_stats():
+    return await logic_get_stats()
 
 class CreateTaskModel(BaseModel):
     title: str
