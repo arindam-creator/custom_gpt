@@ -185,6 +185,21 @@ class CreateTaskModel(BaseModel):
 async def api_create_task(task: CreateTaskModel):
     return await logic_create_task(task.title, task.priority)
 
+class UpdateTaskInput(BaseModel):
+    title: Optional[str] = Field(None)
+    task_type: Optional[Literal['to-do', 'email', 'whatsapp', 'call']] = Field(None)
+    priority: Optional[Literal['none', 'low', 'medium', 'high']] = Field(None)
+    status: Optional[Literal['in_progress', 'to-do', 'completed']] = Field(None)
+    due_date: Optional[str] = Field(None)
+    notes: Optional[str] = Field(None)
+
+@app.patch("/tasks/{task_id}", operation_id="updateTask")
+async def gpt_update_task(task_id: int, task: UpdateTaskInput):
+    payload = task.model_dump(exclude_none=True)
+    if not payload:
+        return {"error": "No fields provided to update."}
+    return await fetch_from_django(f"tasks/{task_id}/", method="PATCH", body=payload)
+
 # --- MCP SSE Transport ---
 sse = SseServerTransport("/messages")
 
