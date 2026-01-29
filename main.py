@@ -25,10 +25,15 @@ async def fetch_from_django(endpoint: str, method: str = "GET", params: dict = N
     
     async with httpx.AsyncClient() as client:
         try:
-            if method == "GET":
-                resp = await client.get(url, headers=headers, params=params)
-            else:
-                resp = await client.post(url, headers=headers, json=body)
+            # Updated to support PATCH and PUT dynamically
+            if method.upper() == "GET":
+                resp = await client.get(url, headers=headers, params=params, timeout=10.0)
+            elif method.upper() == "POST":
+                resp = await client.post(url, headers=headers, json=body, timeout=10.0)
+            elif method.upper() == "PATCH":
+                resp = await client.patch(url, headers=headers, json=body, timeout=10.0)
+            elif method.upper() == "PUT":
+                resp = await client.put(url, headers=headers, json=body, timeout=10.0)
             
             if resp.status_code == 204: return {"success": True}
             resp.raise_for_status()
@@ -56,6 +61,12 @@ async def auth_middleware(request: Request, call_next):
 mcp_server = Server("Django-CRM-Bridge")
 
 # --- LOGIC HANDLERS ---
+async def logic_update_status(task_id: int, status: str):
+    return await fetch_from_django(f"tasks/{task_id}/update-status/", method="PATCH", body={"status": status})
+
+async def logic_update_priority(task_id: int, priority: str):
+    return await fetch_from_django(f"tasks/{task_id}/update-priority/", method="PATCH", body={"priority": priority})
+
 async def logic_get_tasks(limit: int = 10, status: str = None):
     params = {"limit": limit}
     if status: params["status"] = status
@@ -64,99 +75,96 @@ async def logic_get_tasks(limit: int = 10, status: str = None):
 async def logic_create_task(title: str, priority: str = "medium"):
     return await fetch_from_django("tasks/", method="POST", body={"title": title, "priority": priority})
 
-# [ADDED] Logic for Latest Tasks
 async def logic_get_latest_tasks():
     return await fetch_from_django("tasks/latest/")
 
-# [ADDED] Logic for Stats
 async def logic_get_stats():
     return await fetch_from_django("tasks/statistics/")
-
 # --- MCP TOOL REGISTRATION (The Low-Level Way) ---
 
-# 1. Register the List of Tools
-@mcp_server.list_tools()
-async def handle_list_tools() -> list[types.Tool]:
-    return [
-        types.Tool(
-            name="get_crm_tasks",
-            description="Fetch all tasks from the CRM with filtering.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "limit": {"type": "integer", "default": 10},
-                    "status": {"type": "string", "enum": ["to-do", "in_progress", "completed"]}
-                }
-            }
-        ),
-        types.Tool(
-            name="create_crm_task",
-            description="Create a new task in the CRM.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "priority": {"type": "string", "enum": ["low", "medium", "high"]}
-                },
-                "required": ["title"]
-            }
-        ),
-        # [ADDED] Tool for Latest Tasks
-        types.Tool(
-            name="get_latest_tasks",
-            description="Fetch the most recent tasks from the CRM.",
-            inputSchema={
-                "type": "object",
-                "properties": {} # No inputs needed
-            }
-        ),
-        # [ADDED] Tool for Stats
-        types.Tool(
-            name="get_crm_stats",
-            description="Get CRM task statistics (counts by status, priority, etc).",
-            inputSchema={
-                "type": "object",
-                "properties": {} # No inputs needed
-            }
-        )
-    ]
+# # 1. Register the List of Tools
+# @mcp_server.list_tools()
+# async def handle_list_tools() -> list[types.Tool]:
+#     return [
+#         types.Tool(
+#             name="get_crm_tasks",
+#             description="Fetch all tasks from the CRM with filtering.",
+#             inputSchema={
+#                 "type": "object",
+#                 "properties": {
+#                     "limit": {"type": "integer", "default": 10},
+#                     "status": {"type": "string", "enum": ["to-do", "in_progress", "completed"]}
+#                 }
+#             }
+#         ),
+#         types.Tool(
+#             name="create_crm_task",
+#             description="Create a new task in the CRM.",
+#             inputSchema={
+#                 "type": "object",
+#                 "properties": {
+#                     "title": {"type": "string"},
+#                     "priority": {"type": "string", "enum": ["low", "medium", "high"]}
+#                 },
+#                 "required": ["title"]
+#             }
+#         ),
+#         # [ADDED] Tool for Latest Tasks
+#         types.Tool(
+#             name="get_latest_tasks",
+#             description="Fetch the most recent tasks from the CRM.",
+#             inputSchema={
+#                 "type": "object",
+#                 "properties": {} # No inputs needed
+#             }
+#         ),
+#         # [ADDED] Tool for Stats
+#         types.Tool(
+#             name="get_crm_stats",
+#             description="Get CRM task statistics (counts by status, priority, etc).",
+#             inputSchema={
+#                 "type": "object",
+#                 "properties": {} # No inputs needed
+#             }
+#         )
+#     ]
 
-# 2. Register the Tool Execution Logic
-@mcp_server.call_tool()
-async def handle_call_tool(name: str, arguments: dict | None) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-    if arguments is None:
-        arguments = {}
+# # 2. Register the Tool Execution Logic
+# @mcp_server.call_tool()
+# async def handle_call_tool(name: str, arguments: dict | None) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+#     if arguments is None:
+#         arguments = {}
 
-    try:
-        if name == "get_crm_tasks":
-            result = await logic_get_tasks(
-                limit=arguments.get("limit", 10),
-                status=arguments.get("status")
-            )
-            return [types.TextContent(type="text", text=str(result))]
+#     try:
+#         if name == "get_crm_tasks":
+#             result = await logic_get_tasks(
+#                 limit=arguments.get("limit", 10),
+#                 status=arguments.get("status")
+#             )
+#             return [types.TextContent(type="text", text=str(result))]
         
-        elif name == "create_crm_task":
-            result = await logic_create_task(
-                title=arguments.get("title"),
-                priority=arguments.get("priority", "medium")
-            )
-            return [types.TextContent(type="text", text=str(result))]
+#         elif name == "create_crm_task":
+#             result = await logic_create_task(
+#                 title=arguments.get("title"),
+#                 priority=arguments.get("priority", "medium")
+#             )
+#             return [types.TextContent(type="text", text=str(result))]
 
-        # [ADDED] Handling for Latest Tasks
-        elif name == "get_latest_tasks":
-            result = await logic_get_latest_tasks()
-            return [types.TextContent(type="text", text=str(result))]
+#         # [ADDED] Handling for Latest Tasks
+#         elif name == "get_latest_tasks":
+#             result = await logic_get_latest_tasks()
+#             return [types.TextContent(type="text", text=str(result))]
 
-        # [ADDED] Handling for Stats
-        elif name == "get_crm_stats":
-            result = await logic_get_stats()
-            return [types.TextContent(type="text", text=str(result))]
+#         # [ADDED] Handling for Stats
+#         elif name == "get_crm_stats":
+#             result = await logic_get_stats()
+#             return [types.TextContent(type="text", text=str(result))]
             
-        else:
-            raise ValueError(f"Unknown tool: {name}")
+#         else:
+#             raise ValueError(f"Unknown tool: {name}")
 
-    except Exception as e:
-        return [types.TextContent(type="text", text=f"Error: {str(e)}")]
+#     except Exception as e:
+#         return [types.TextContent(type="text", text=f"Error: {str(e)}")]
 
 # --- REST ENDPOINTS (For ChatGPT) ---
 @app.get("/")
@@ -176,6 +184,20 @@ async def api_get_latest_tasks():
 @app.get("/stats")
 async def api_get_stats():
     return await logic_get_stats()
+
+@app.patch("/tasks/{task_id}/update-status", operation_id="updateTaskStatus")
+async def api_update_status(task_id: int, data: Dict[str, str]):
+    new_status = data.get("status")
+    if not new_status:
+        return {"error": "Missing status field"}
+    return await logic_update_status(task_id, new_status)
+
+@app.patch("/tasks/{task_id}/update-priority", operation_id="updateTaskPriority")
+async def api_update_priority(task_id: int, data: Dict[str, str]):
+    new_priority = data.get("priority")
+    if not new_priority:
+        return {"error": "Missing priority field"}
+    return await logic_update_priority(task_id, new_priority)
 
 class CreateTaskModel(BaseModel):
     title: str
