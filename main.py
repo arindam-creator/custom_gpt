@@ -60,7 +60,34 @@ async def auth_middleware(request: Request, call_next):
 # --- MCP Server Setup ---
 mcp_server = Server("Django-CRM-Bridge")
 
+class ContactInput(BaseModel):
+    name: str
+    last_name: Optional[str] = None
+    email: str
+    title: Optional[str] = None
+    mobile_phone: Optional[str] = None
+    seniority: Optional[str] = None
+    departments: Optional[str] = None
+    country: Optional[str] = None
+
+class UpdateContactInput(BaseModel):
+    name: Optional[str] = None
+    last_name: Optional[str] = None
+    email: Optional[str] = None
+    title: Optional[str] = None
+    mobile_phone: Optional[str] = None
+    seniority: Optional[str] = None
+    departments: Optional[str] = None
+
 # --- LOGIC HANDLERS ---
+async def logic_get_contacts(search: str = None, limit: int = 10):
+    params = {"limit": limit}
+    if search: params["search"] = search
+    return await fetch_from_django("contacts/", params=params)
+
+async def logic_create_contact(data: dict):
+    return await fetch_from_django("contacts/", method="POST", body=data)
+
 async def logic_update_status(task_id: int, status: str):
     return await fetch_from_django(f"tasks/{task_id}/update-status/", method="PATCH", body={"status": status})
 
@@ -80,91 +107,7 @@ async def logic_get_latest_tasks():
 
 async def logic_get_stats():
     return await fetch_from_django("tasks/statistics/")
-# --- MCP TOOL REGISTRATION (The Low-Level Way) ---
 
-# # 1. Register the List of Tools
-# @mcp_server.list_tools()
-# async def handle_list_tools() -> list[types.Tool]:
-#     return [
-#         types.Tool(
-#             name="get_crm_tasks",
-#             description="Fetch all tasks from the CRM with filtering.",
-#             inputSchema={
-#                 "type": "object",
-#                 "properties": {
-#                     "limit": {"type": "integer", "default": 10},
-#                     "status": {"type": "string", "enum": ["to-do", "in_progress", "completed"]}
-#                 }
-#             }
-#         ),
-#         types.Tool(
-#             name="create_crm_task",
-#             description="Create a new task in the CRM.",
-#             inputSchema={
-#                 "type": "object",
-#                 "properties": {
-#                     "title": {"type": "string"},
-#                     "priority": {"type": "string", "enum": ["low", "medium", "high"]}
-#                 },
-#                 "required": ["title"]
-#             }
-#         ),
-#         # [ADDED] Tool for Latest Tasks
-#         types.Tool(
-#             name="get_latest_tasks",
-#             description="Fetch the most recent tasks from the CRM.",
-#             inputSchema={
-#                 "type": "object",
-#                 "properties": {} # No inputs needed
-#             }
-#         ),
-#         # [ADDED] Tool for Stats
-#         types.Tool(
-#             name="get_crm_stats",
-#             description="Get CRM task statistics (counts by status, priority, etc).",
-#             inputSchema={
-#                 "type": "object",
-#                 "properties": {} # No inputs needed
-#             }
-#         )
-#     ]
-
-# # 2. Register the Tool Execution Logic
-# @mcp_server.call_tool()
-# async def handle_call_tool(name: str, arguments: dict | None) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
-#     if arguments is None:
-#         arguments = {}
-
-#     try:
-#         if name == "get_crm_tasks":
-#             result = await logic_get_tasks(
-#                 limit=arguments.get("limit", 10),
-#                 status=arguments.get("status")
-#             )
-#             return [types.TextContent(type="text", text=str(result))]
-        
-#         elif name == "create_crm_task":
-#             result = await logic_create_task(
-#                 title=arguments.get("title"),
-#                 priority=arguments.get("priority", "medium")
-#             )
-#             return [types.TextContent(type="text", text=str(result))]
-
-#         # [ADDED] Handling for Latest Tasks
-#         elif name == "get_latest_tasks":
-#             result = await logic_get_latest_tasks()
-#             return [types.TextContent(type="text", text=str(result))]
-
-#         # [ADDED] Handling for Stats
-#         elif name == "get_crm_stats":
-#             result = await logic_get_stats()
-#             return [types.TextContent(type="text", text=str(result))]
-            
-#         else:
-#             raise ValueError(f"Unknown tool: {name}")
-
-#     except Exception as e:
-#         return [types.TextContent(type="text", text=f"Error: {str(e)}")]
 
 # --- REST ENDPOINTS (For ChatGPT) ---
 @app.get("/")
@@ -221,6 +164,29 @@ async def gpt_update_task(task_id: int, task: UpdateTaskInput):
     if not payload:
         return {"error": "No fields provided to update."}
     return await fetch_from_django(f"tasks/{task_id}/", method="PATCH", body=payload)
+
+@app.get("/contacts/search", operation_id="searchContacts")
+async def api_search_contacts(search: Optional[str] = None, limit: int = 10):
+    """Search for contacts by name, email, or title."""
+    return await logic_get_contacts(search, limit)
+
+@app.post("/contacts/create", operation_id="createContact")
+async def api_create_contact(contact: ContactInput):
+    """Create a new contact in the CRM."""
+    return await logic_create_contact(contact.model_dump(exclude_none=True))
+
+@app.patch("/contacts/{contact_id}", operation_id="updateContact")
+async def api_update_contact(contact_id: int, contact: UpdateContactInput):
+    """Update specific fields of an existing contact."""
+    payload = contact.model_dump(exclude_none=True)
+    if not payload:
+        return {"error": "No fields provided to update."}
+    return await fetch_from_django(f"contacts/{contact_id}/", method="PATCH", body=payload)
+
+@app.delete("/contacts/{contact_id}", operation_id="deleteContact")
+async def api_delete_contact(contact_id: int):
+    """Delete a contact from the CRM."""
+    return await fetch_from_django(f"contacts/{contact_id}/", method="DELETE")
 
 # --- MCP SSE Transport ---
 sse = SseServerTransport("/messages")
