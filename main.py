@@ -188,6 +188,28 @@ async def api_delete_contact(contact_id: int):
     """Delete a contact from the CRM."""
     return await fetch_from_django(f"contacts/{contact_id}/", method="DELETE")
 
+# --- Pydantic Model for Email ---
+class SendEmailInput(BaseModel):
+    to: str = Field(..., description="Recipient email address")
+    subject: str = Field(..., description="Subject line of the email")
+    body: str = Field(..., description="Body of the email (supports HTML)")
+    cc: Optional[str] = Field(None, description="Comma-separated CC email addresses")
+    bcc: Optional[str] = Field(None, description="Comma-separated BCC email addresses")
+    from_email: Optional[str] = Field(None, alias="from", description="Optional alias or 'from' address")
+
+# --- Email Endpoint ---
+@app.post("gamil/send_mail/", operation_id="sendEmail")
+async def api_send_email(email_data: SendEmailInput):
+    """
+    Sends an email using the user's connected Gmail account in the CRM.
+    """
+    # Convert Pydantic model to a dict, handling the 'from' alias
+    payload = email_data.model_dump(by_alias=True, exclude_none=True)
+    
+    # Forwards to your Django @api_view(['POST']) send_email
+    # Note: Ensure your Django URL configuration routes 'email/send/' to your send_email function
+    return await fetch_from_django("email/send/", method="POST", body=payload)
+
 # --- MCP SSE Transport ---
 sse = SseServerTransport("/messages")
 
