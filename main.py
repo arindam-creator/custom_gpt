@@ -9,6 +9,7 @@ from typing import List, Optional, Literal, Dict, Any
 import mcp.types as types
 from settings import DJANGO_BASE_URL, PORT, DJANGO_AUTH_TOKEN
 from oauth import router as auth_router
+import datetime
 
 # --- State Management ---
 current_user_token: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("current_user_token", default=None)
@@ -263,12 +264,23 @@ async def api_get_meetings(limit: int = 10, status: Optional[str] = None):
 
 @app.post("/meetings/create", operation_id="createMeeting")
 async def api_create_meeting(meeting: CreateMeetingInput):
-    """
-    Schedules a meeting, creates a Google Calendar event, 
-    and generates a Google Meet link.
-    """
-    payload = meeting.model_dump(exclude_none=True)
-    # Maps to MeetingSchedulerViewSet.create
+    # Parse dates to calculate CRM-required fields
+    start_dt = datetime.fromisoformat(meeting.start.replace('Z', '+00:00'))
+    end_dt = datetime.fromisoformat(meeting.end.replace('Z', '+00:00'))
+    
+    duration = int((end_dt - start_dt).total_seconds() / 60)
+    
+    payload = {
+        **meeting.model_dump(),
+        "internal_name": meeting.event_title,
+        "summary": meeting.event_title,
+        "meeting_date": start_dt.strftime("%Y-%m-%d"),
+        "meeting_slot": f"{start_dt.strftime('%I:%M %p')} - {end_dt.strftime('%I:%M %p')}",
+        "time_duration": duration,
+        "time_zone": "Asia/Kolkata",
+        "time_zone_gmt": "GMT+5:30"
+    }
+    
     return await fetch_from_django("meetings/", method="POST", body=payload)
 
 @app.delete("/meetings/{meeting_id}", operation_id="deleteMeeting")
