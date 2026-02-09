@@ -9,7 +9,7 @@ from typing import List, Optional, Literal, Dict, Any
 import mcp.types as types
 from settings import DJANGO_BASE_URL, PORT, DJANGO_AUTH_TOKEN
 from oauth import router as auth_router
-import datetime
+import dateutil.parser
 
 # --- State Management ---
 current_user_token: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar("current_user_token", default=None)
@@ -262,26 +262,46 @@ async def api_get_meetings(limit: int = 10, status: Optional[str] = None):
     if status: params["status"] = status
     return await fetch_from_django("meetings/", params=params)
 
-@app.post("/meetings/create", operation_id="createMeeting")
-async def api_create_meeting(meeting: CreateMeetingInput):
-    # Parse dates to calculate CRM-required fields
-    start_dt = datetime.fromisoformat(meeting.start.replace('Z', '+00:00'))
-    end_dt = datetime.fromisoformat(meeting.end.replace('Z', '+00:00'))
+def prepare_meeting_payload(data: CreateMeetingInput):
+    # Use dateutil to handle 'Z' or offset formats gracefully
+    start_dt = dateutil.parser.isoparse(data.start)
+    end_dt = dateutil.parser.isoparse(data.end)
     
+    # Calculate duration in minutes
     duration = int((end_dt - start_dt).total_seconds() / 60)
     
-    payload = {
-        **meeting.model_dump(),
-        "internal_name": meeting.event_title,
-        "summary": meeting.event_title,
+    # Format according to your CRM's successful payload example
+    return {
+        "event_title": data.event_title,
+        "internal_name": data.event_title,
+        "summary": data.event_title,
+        "description": data.description or "",
+        "location": data.location or "",
+        "start": start_dt.isoformat(),
+        "end": end_dt.isoformat(),
         "meeting_date": start_dt.strftime("%Y-%m-%d"),
         "meeting_slot": f"{start_dt.strftime('%I:%M %p')} - {end_dt.strftime('%I:%M %p')}",
         "time_duration": duration,
-        "time_zone": "Asia/Kolkata",
-        "time_zone_gmt": "GMT+5:30"
+        "time_zone": "Asia/Kolkata", # Defaulting to your CRM's setting
+        "time_zone_gmt": "GMT+5:30",
+        "attendees": data.attendees,
+        "model_name": data.model_name,
+        "model_id": data.model_id
     }
-    
-    return await fetch_from_django("meetings/", method="POST", body=payload)
+
+# --- Updated FastAPI Endpoint ---
+@app.post("/meetings/create", operation_id="createMeeting")
+async def api_create_meeting(meeting: CreateMeetingInput):
+    try:
+        # 1. Transform simple GPT data into complex CRM payload
+        crm_payload = prepare_meeting_payload(meeting)
+        
+        # 2. Forward to Django (ensure trailing slash exists)
+        # Your ViewSet uses standard router paths, so "meetings/" is correct
+        return await fetch_from_django("meetings/", method="POST", body=crm_payload)
+    except Exception as e:
+        # Return error as JSON instead of letting FastAPI 500
+        return {"error": f"Bridge processing failed: {str(e)}"}
 
 @app.delete("/meetings/{meeting_id}", operation_id="deleteMeeting")
 async def api_delete_meeting(meeting_id: int):
