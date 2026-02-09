@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from pydantic import BaseModel, Field
-from typing import Optional, Literal, Dict, Any
+from typing import List, Optional, Literal, Dict, Any
 import mcp.types as types
 from settings import DJANGO_BASE_URL, PORT, DJANGO_AUTH_TOKEN
 from oauth import router as auth_router
@@ -210,6 +210,71 @@ async def api_send_email(email_data: SendEmailInput):
     # CRITICAL FIX: Match the "gamil/send_mail/" path exactly as defined in your Django urls.py
     # We add the trailing slash here to avoid 301 redirect issues with POST data
     return await fetch_from_django("gamil/send_mail/", method="POST", body=payload)
+
+# --- Pydantic Model for WhatsApp ---
+class SendWhatsAppInput(BaseModel):
+    phone: str = Field(..., description="Recipient phone number (e.g., +919123456789)")
+    message: Optional[str] = Field(None, description="The text message content")
+    contact_id: Optional[int] = Field(None, description="The CRM ID of the contact")
+    business_id: Optional[int] = Field(None, description="The CRM ID of the business")
+    template_id: Optional[int] = Field(None, description="Optional: ID of the WhatsApp template to use")
+
+# --- WhatsApp Endpoints ---
+
+@app.post("/whatsapp/send", operation_id="sendWhatsApp")
+async def api_send_whatsapp(wa_data: SendWhatsAppInput):
+    """
+    Sends a WhatsApp message to a contact or phone number via the CRM.
+    """
+    payload = wa_data.model_dump(exclude_none=True)
+    # Forward to Django path: "whatsapp/send/" (Verify this name in your Django urls.py)
+    return await fetch_from_django("whatsapp/send/", method="POST", body=payload)
+
+@app.get("/contacts/{contact_id}/messages", operation_id="getWhatsAppMessages")
+async def api_get_wa_messages(contact_id: int):
+    """
+    Retrieves the history of WhatsApp messages for a specific contact.
+    """
+    return await fetch_from_django(f"contacts/{contact_id}/messages/", method="GET")
+
+# --- Pydantic Models for Meetings ---
+class MeetingAttendee(BaseModel):
+    email: str
+
+class CreateMeetingInput(BaseModel):
+    event_title: str = Field(..., description="The title of the meeting")
+    description: Optional[str] = None
+    location: Optional[str] = None
+    start: str = Field(..., description="ISO 8601 start time (e.g., 2024-02-10T10:00:00Z)")
+    end: str = Field(..., description="ISO 8601 end time")
+    time_zone: Optional[str] = "Asia/Kolkata"
+    attendees: List[str] = Field(default_factory=list, description="List of attendee emails")
+    model_name: Optional[str] = Field(None, description="Optional: 'contact', 'lead', or 'deal'")
+    model_id: Optional[int] = Field(None, description="Optional: ID of the associated record")
+
+# --- Meeting Endpoints ---
+
+@app.get("/meetings/all", operation_id="getAllMeetings")
+async def api_get_meetings(limit: int = 10, status: Optional[str] = None):
+    """List scheduled meetings."""
+    params = {"limit": limit}
+    if status: params["status"] = status
+    return await fetch_from_django("meetings/", params=params)
+
+@app.post("/meetings/create", operation_id="createMeeting")
+async def api_create_meeting(meeting: CreateMeetingInput):
+    """
+    Schedules a meeting, creates a Google Calendar event, 
+    and generates a Google Meet link.
+    """
+    payload = meeting.model_dump(exclude_none=True)
+    # Maps to MeetingSchedulerViewSet.create
+    return await fetch_from_django("meetings/", method="POST", body=payload)
+
+@app.delete("/meetings/{meeting_id}", operation_id="deleteMeeting")
+async def api_delete_meeting(meeting_id: int):
+    """Cancels a meeting and removes it from Google Calendar."""
+    return await fetch_from_django(f"meetings/{meeting_id}/", method="DELETE")
 
 # --- MCP SSE Transport ---
 sse = SseServerTransport("/messages")
