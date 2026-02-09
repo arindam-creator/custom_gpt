@@ -309,10 +309,9 @@ async def api_delete_meeting(meeting_id: int):
     return await fetch_from_django(f"meetings/{meeting_id}/", method="DELETE")
 
 class WhatsAppTemplateSendInput(BaseModel):
-    phone: str = Field(..., description="Recipient phone number with country code")
-    template_name: str = Field(..., description="The internal whatsapp_template_name (e.g. welcome_msg)")
-    # This dictionary maps the placeholders in your template (e.g., {"name": "Arin"})
-    template_variables: Dict[str, str] = Field(default_factory=dict)
+    phone: str = Field(..., description="Recipient phone number (e.g. 7908821522)")
+    template_id: int = Field(..., description="The database ID of the template")
+    message: Optional[str] = Field("Hello", description="The text content for the message")
     contact_id: Optional[int] = None
 
 # --- Logic Handlers ---
@@ -331,31 +330,18 @@ async def api_list_templates():
 @app.post("/whatsapp/send-template", operation_id="sendWhatsAppTemplate")
 async def api_send_whatsapp_template(data: WhatsAppTemplateSendInput):
     """
-    Sends a pre-approved WhatsApp template. 
-    Required for the first message to a contact.
+    Sends a WhatsApp Template using the structure expected by Django.
     """
-    # We construct the payload Meta expects for named parameters
-    parameters = []
-    for key, value in data.template_variables.items():
-        parameters.append({
-            "type": "text",
-            "parameter_name": key,
-            "text": value
-        })
-
+    # Create the flat payload matching your CRM log:
+    # {message: "Hello", phone: "7908821522", contact_id: 1799025, template_id: 307}
     payload = {
         "phone": data.phone,
         "contact_id": data.contact_id,
-        "template_name": data.template_name, # This maps to template_data.whatsapp_template_name in Django
-        "template_type": "template", # Tells your Django send_whatsapp_message to use template logic
-        "template_data": { # This matches the structure in your Django 'prepare_message_payload'
-             "components": [{
-                 "type": "body",
-                 "parameters": parameters
-             }]
-        }
+        "template_id": data.template_id,
+        "message": data.message
     }
     
+    # Ensure your Django URL is correctly mapped (likely "whatsapp/send/")
     return await fetch_from_django("whatsapp/send/", method="POST", body=payload)
 
 # --- MCP SSE Transport ---
